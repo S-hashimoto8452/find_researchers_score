@@ -710,10 +710,10 @@ if check_signin():
 
     # 認証後のみ表示されるサイドバー（ログアウト＋検索条件）
     with st.sidebar:
-    if st.button("ログアウト"):
-        st.session_state["signed_in"] = False
-        st.session_state.pop("user", None)
-        st.rerun()
+        if st.button("ログアウト"):
+            st.session_state["signed_in"] = False
+            st.session_state.pop("user", None)
+            st.rerun()
 
         st.header("Search Filters")
         disease = st.text_input("Disease (例: peripheral artery disease / heart failure ※引用符は不要)")
