@@ -1,4 +1,4 @@
-# Run with:  streamlit run ResearcherScreening_v4_app.py
+# Run with:  streamlit run find_researchers.py
 # Requirements: pip install streamlit requests pandas python-dateutil
 
 import re
@@ -14,12 +14,11 @@ run = False
 
 st.set_page_config(page_title="InsighTCROSS Literature Scorer v4", layout="wide")
 
-# --- パスワード認証処理（堅牢化版） ---
 # --- ログイン（許可メンバー制・Secrets管理） ---
 def check_signin():
     """
     - Secretsで許可メンバー（ID/メール）とパスワードを管理
-    - 単一共通パスワード or ユーザーごとパスワードの両対応
+    - 共通パスワード or 個別パスワードの両対応
     """
     # Secretsの存在確認
     if "auth" not in st.secrets:
@@ -28,10 +27,9 @@ def check_signin():
 
     auth = st.secrets["auth"]
 
-    # 許可ユーザー（ID/メール）の取り出し
+    # 許可ユーザーの取り出し
     allow_users = set()
     if "allow_users" in auth:
-        # カンマ区切り or 配列の両対応
         if isinstance(auth["allow_users"], str):
             allow_users = {u.strip().lower() for u in auth["allow_users"].split(",") if u.strip()}
         elif isinstance(auth["allow_users"], (list, tuple)):
@@ -40,11 +38,9 @@ def check_signin():
         st.error("設定エラー：Secretsの [auth].allow_users が未設定です。")
         st.stop()
 
-    # パスワードのモード
-    # 1) 共通パスワード: auth.common_password
-    # 2) 個別パスワード: [auth.users] セクションに {id: password}
+    # 共通パスワード or 個別パスワード
     common_pw = auth.get("common_password", None)
-    user_pw_map = dict(st.secrets.get("auth.users", {}))  # 無ければ空
+    user_pw_map = dict(st.secrets.get("auth.users", {}))
 
     # セッション初期化
     ss = st.session_state
@@ -56,7 +52,7 @@ def check_signin():
     # 未ログイン時フォーム
     if not ss.signed_in:
         with st.form("signin_form", clear_on_submit=False):
-            user_id = st.text_input("メールまたはユーザーID（許可されたIDのみ）").strip().lower()
+            user_id = st.text_input("メールまたはユーザーID").strip().lower()
             password = st.text_input("パスワード", type="password")
             submitted = st.form_submit_button("ログイン")
 
@@ -82,7 +78,7 @@ def check_signin():
                 ss.signin_attempts += 1
                 st.error("IDまたはパスワードが違います。")
                 if ss.signin_attempts >= 5:
-                    st.warning("試行回数が多すぎます。しばらく時間を空けて再度お試しください。")
+                    st.warning("試行回数が多すぎます。しばらく時間を空けてから再度お試しください。")
                     st.stop()
             return False
 
