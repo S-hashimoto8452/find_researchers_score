@@ -15,41 +15,80 @@ run = False
 st.set_page_config(page_title="InsighTCROSS Literature Scorer v4", layout="wide")
 
 # --- パスワード認証処理（堅牢化版） ---
-def check_password():
+# --- ログイン（許可メンバー制・Secrets管理） ---
+def check_signin():
     """
-    GitHub/Streamlit Cloud前提のパスワード保護。
-    - .streamlit/secrets.toml の [passwords].app_password を使用（APIキー不要）
+    - Secretsで許可メンバー（ID/メール）とパスワードを管理
+    - 単一共通パスワード or ユーザーごとパスワードの両対応
     """
-    # secrets の設定漏れチェック
-    if "passwords" not in st.secrets or "app_password" not in st.secrets["passwords"]:
-        st.error("アプリ設定エラー：.streamlit/secrets.toml に [passwords].app_password を設定してください。")
+    # Secretsの存在確認
+    if "auth" not in st.secrets:
+        st.error("設定エラー：Secretsに [auth] セクションがありません。")
         st.stop()
 
-    # 状態管理
-    if "password_correct" not in st.session_state:
-        st.session_state["password_correct"] = False
-    if "pw_attempts" not in st.session_state:
-        st.session_state["pw_attempts"] = 0
+    auth = st.secrets["auth"]
 
-    # 未認証：フォーム
-    if not st.session_state["password_correct"]:
-        with st.form("login_form", clear_on_submit=False):
-            password = st.text_input("パスワードを入力してください", type="password")
+    # 許可ユーザー（ID/メール）の取り出し
+    allow_users = set()
+    if "allow_users" in auth:
+        # カンマ区切り or 配列の両対応
+        if isinstance(auth["allow_users"], str):
+            allow_users = {u.strip().lower() for u in auth["allow_users"].split(",") if u.strip()}
+        elif isinstance(auth["allow_users"], (list, tuple)):
+            allow_users = {str(u).strip().lower() for u in auth["allow_users"]}
+    else:
+        st.error("設定エラー：Secretsの [auth].allow_users が未設定です。")
+        st.stop()
+
+    # パスワードのモード
+    # 1) 共通パスワード: auth.common_password
+    # 2) 個別パスワード: [auth.users] セクションに {id: password}
+    common_pw = auth.get("common_password", None)
+    user_pw_map = dict(st.secrets.get("auth.users", {}))  # 無ければ空
+
+    # セッション初期化
+    ss = st.session_state
+    if "signed_in" not in ss:
+        ss.signed_in = False
+    if "signin_attempts" not in ss:
+        ss.signin_attempts = 0
+
+    # 未ログイン時フォーム
+    if not ss.signed_in:
+        with st.form("signin_form", clear_on_submit=False):
+            user_id = st.text_input("メールまたはユーザーID（許可されたIDのみ）").strip().lower()
+            password = st.text_input("パスワード", type="password")
             submitted = st.form_submit_button("ログイン")
 
         if submitted:
-            if password == st.secrets["passwords"]["app_password"]:
-                st.session_state["password_correct"] = True
-                st.session_state["pw_attempts"] = 0
+            # 許可ユーザー確認
+            if user_id not in allow_users:
+                st.error("このユーザーは許可されていません。管理者に連絡してください。")
+                return False
+
+            # パスワード検証
+            ok = False
+            if user_id in user_pw_map:
+                ok = (password == str(user_pw_map[user_id]))
+            elif common_pw is not None:
+                ok = (password == str(common_pw))
+
+            if ok:
+                ss.signed_in = True
+                ss.user = user_id
+                ss.signin_attempts = 0
                 st.rerun()
             else:
-                st.session_state["pw_attempts"] += 1
-                st.error("パスワードが違います。")
-                if st.session_state["pw_attempts"] >= 5:
-                    st.warning("試行回数が多すぎます。しばらく時間を空けてから再度お試しください。")
+                ss.signin_attempts += 1
+                st.error("IDまたはパスワードが違います。")
+                if ss.signin_attempts >= 5:
+                    st.warning("試行回数が多すぎます。しばらく時間を空けて再度お試しください。")
                     st.stop()
+            return False
+
         return False
 
+    # ここに来たらログイン済み
     return True
 
 # -------------------- Helpers --------------------
@@ -629,7 +668,7 @@ def aggregate_author_scores(df: pd.DataFrame, long_vowel: bool = True, surname_l
     return out[cols]
 
 # --- アプリ本体 ---
-if check_password():
+if check_signin():
     st.title("InsighTCROSS® Literature Scorer")
     st.caption("Europe PMC（APIキー不要）を利用して文献を検索・著者スコア化します。")
 
