@@ -15,54 +15,67 @@ run = False
 st.set_page_config(page_title="InsighTCROSS Literature Scorer v4", layout="wide")
 
 # --- ログイン（許可メンバー制・Secrets管理） ---
+# --- ログイン（許可メンバー制・Secrets管理：堅牢化版） ---
 def check_signin():
     """
-    - Secretsで許可メンバー（ID/メール）とパスワードを管理
-    - 共通パスワード or 個別パスワードの両対応
+    Secrets 例:
+    [auth]
+    allow_users = ["alice@example.com", "bob@example.com", "carol"]
+    common_password = "SharedPW"  # or omit and use [auth.users]
+
+    [auth.users]
+    alice@example.com = "AlicePW123"
     """
-    # Secretsの存在確認
+    # 互換: [auth] が無ければ [passwords].app_password へフォールバック（任意）
     if "auth" not in st.secrets:
-        st.error("設定エラー：Secretsに [auth] セクションがありません。")
+        # フォールバックを使いたくない場合はここでエラー停止のままでもOK
+        if "passwords" in st.secrets and "app_password" in st.secrets["passwords"]:
+            return legacy_password_gate()
+        st.error("設定エラー：Secretsに [auth] セクションがありません。StreamlitのSecretsで [auth] を設定してください。")
         st.stop()
 
     auth = st.secrets["auth"]
 
-    # 許可ユーザーの取り出し
+    # allow_users の取り込みを柔軟に（配列 / カンマ / 全角カンマ / 改行に対応）
     allow_users = set()
-    if "allow_users" in auth:
-        if isinstance(auth["allow_users"], str):
-            allow_users = {u.strip().lower() for u in auth["allow_users"].split(",") if u.strip()}
-        elif isinstance(auth["allow_users"], (list, tuple)):
-            allow_users = {str(u).strip().lower() for u in auth["allow_users"]}
-    else:
+    raw_allow = auth.get("allow_users", None)
+    if raw_allow is None:
         st.error("設定エラー：Secretsの [auth].allow_users が未設定です。")
         st.stop()
 
-    # 共通パスワード or 個別パスワード
+    def _split_any(s: str):
+        # カンマ（半角/全角）と改行のどれでも分割
+        return [x.strip() for x in re.split(r"[,\u3001\n\r]+", s) if x.strip()]
+
+    if isinstance(raw_allow, (list, tuple)):
+        allow_users = {str(u).strip().lower() for u in raw_allow if str(u).strip()}
+    elif isinstance(raw_allow, str):
+        allow_users = {x.lower() for x in _split_any(raw_allow)}
+    else:
+        st.error("設定エラー：[auth].allow_users は配列または文字列で指定してください。")
+        st.stop()
+
+    # 共通PW or 個別PW
     common_pw = auth.get("common_password", None)
     user_pw_map = dict(st.secrets.get("auth.users", {}))
 
     # セッション初期化
     ss = st.session_state
-    if "signed_in" not in ss:
-        ss.signed_in = False
-    if "signin_attempts" not in ss:
-        ss.signin_attempts = 0
+    ss.setdefault("signed_in", False)
+    ss.setdefault("signin_attempts", 0)
 
-    # 未ログイン時フォーム
+    # 未ログインフォーム
     if not ss.signed_in:
         with st.form("signin_form", clear_on_submit=False):
-            user_id = st.text_input("メールまたはユーザーID").strip().lower()
+            user_id = st.text_input("メールまたはユーザーID（許可ユーザーのみ）").strip().lower()
             password = st.text_input("パスワード", type="password")
             submitted = st.form_submit_button("ログイン")
 
         if submitted:
-            # 許可ユーザー確認
             if user_id not in allow_users:
                 st.error("このユーザーは許可されていません。管理者に連絡してください。")
                 return False
 
-            # パスワード検証
             ok = False
             if user_id in user_pw_map:
                 ok = (password == str(user_pw_map[user_id]))
@@ -84,8 +97,35 @@ def check_signin():
 
         return False
 
-    # ここに来たらログイン済み
     return True
+
+
+def legacy_password_gate():
+    """[passwords].app_password 用（後方互換）。[auth] が無いときだけ動作。"""
+    pw = st.secrets["passwords"]["app_password"]
+    ss = st.session_state
+    ss.setdefault("signed_in", False)
+    ss.setdefault("signin_attempts", 0)
+
+    if not ss.signed_in:
+        with st.form("pw_form"):
+            password = st.text_input("パスワード", type="password")
+            submitted = st.form_submit_button("ログイン")
+
+        if submitted:
+            if password == str(pw):
+                ss.signed_in = True
+                st.rerun()
+            else:
+                ss.signin_attempts += 1
+                st.error("パスワードが違います。")
+                if ss.signin_attempts >= 5:
+                    st.warning("試行回数が多すぎます。しばらく時間を空けてください。")
+                    st.stop()
+            return False
+        return False
+    return True
+
 
 # -------------------- Helpers --------------------
 EPMC_SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
@@ -670,9 +710,10 @@ if check_signin():
 
     # 認証後のみ表示されるサイドバー（ログアウト＋検索条件）
     with st.sidebar:
-        if st.button("ログアウト"):
-            st.session_state["password_correct"] = False
-            st.rerun()
+    if st.button("ログアウト"):
+        st.session_state["signed_in"] = False
+        st.session_state.pop("user", None)
+        st.rerun()
 
         st.header("Search Filters")
         disease = st.text_input("Disease (例: peripheral artery disease / heart failure ※引用符は不要)")
