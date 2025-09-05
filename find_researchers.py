@@ -704,10 +704,10 @@ def aggregate_author_scores(df: pd.DataFrame, long_vowel: bool = True, surname_l
     return out[cols]
 
 # --- アプリ本体 ---
-if check_signin():
-    st.title("InsighTCROSS® Literature Scorer")
-    st.caption("Europe PMC（APIキー不要）を利用して文献を検索・著者スコア化します。")
 
+st.title("InsighTCROSS® Literature Scorer")
+st.caption("Europe PMC（APIキー不要）を利用して文献を検索・著者スコア化します。")
+if check_signin():
     # 認証後のみ表示されるサイドバー（ログアウト＋検索条件）
     with st.sidebar:
         if st.button("ログアウト"):
